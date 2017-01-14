@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.0
+// @version 	   1.01
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -19,11 +19,13 @@ interface IMail {
     $row: JQuery;
     From: string;
     To: string;
+    Date: string;
     Subj: string;
 }
 interface IFilterOptions {
     From: string;
     To: string;
+    Date: string;
     SubjRx: string;
 }
 interface IDictionary<T> {
@@ -101,6 +103,20 @@ function run() {
         let tos = makeKeyValCount<IMail>(mails, (el) => el.To);
         toFilter.append(buildOptions(tos));
 
+        // фильтр по Date. даты сортируем по убыванию для удобства
+        let dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
+        let dates = makeKeyValCount<IMail>(mails, (el) => el.Date);
+        dates = dates.sort((a, b) => {
+            if (a.Name > b.Name)
+                return -1;
+
+            if (a.Name < b.Name)
+                return 1;
+
+            return 0;
+        })
+        dateFilter.append(buildOptions(dates));
+
         // текстовый фильтр
         let subjFilter = $('<input id="subjFilter" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
 
@@ -114,6 +130,10 @@ function run() {
             doFilter($panel);
         });
 
+        dateFilter.change(function (this: HTMLSelectElement) {
+            doFilter($panel);
+        });
+
         // просто фильтруем.
         subjFilter.change(function () {
             doFilter($panel);
@@ -123,6 +143,7 @@ function run() {
         //
         $panel.append("<span>From: </span>").append(fromFilter);
         $panel.append("<span> To: </span>").append(toFilter);
+        $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
 
         return $panel;
@@ -133,6 +154,7 @@ function getFilterOptions($panel: JQuery): IFilterOptions {
     return {
         From: $panel.find("#fromFilter").val(),
         To: $panel.find("#toFilter").val(),
+        Date: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
     }
 }
@@ -151,9 +173,19 @@ function parseRows($rows: JQuery): IMail[] {
 
         return $(e).text();
     }
+    let fDate = (i: number, e: Element) => {
+        let $a = $(e).find("a:last-child");
+        let txt = $(e).text();
+        if ($a.length > 0)
+            txt = $a.text().trim();
+
+        // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
+        return extractDate(txt);
+    }
 
     let from = $rows.find("td:nth-child(2)").map(f) as any as string[];
     let to = $rows.find("td:nth-child(3)").map(f) as any as string[];
+    let date = $rows.find("td:nth-child(4)").map(fDate) as any as string|null[];
     let subj = $rows.find("td:nth-child(5)").map(f) as any as string[];
     if (from.length !== to.length || from.length !== subj.length)
         throw new Error("Ошибка парсинга списка писем.");
@@ -165,11 +197,23 @@ function parseRows($rows: JQuery): IMail[] {
             $row: $r,
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
+            Date: date[i] != null ? date[i] as string : "unknown",
             Subj: subj[i].length > 0 ? subj[i] : "no subject"
         });
     }
 
     return mails;
+}
+
+// вернет дату или null если нельзя извлечь
+function extractDate(dateTimeStr: string) {
+    // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
+    let items = dateTimeStr.split("-");
+    if (items.length !== 2)
+        return null;
+
+    let dateStr = items[0].trim();
+    return dateStr.length > 0 ? dateStr : null;
 }
 
 function filter(items: IMail[], options: IFilterOptions) {
@@ -183,6 +227,9 @@ function filter(items: IMail[], options: IFilterOptions) {
             continue;
 
         if (options.To != "all" && item.To != options.To)
+            continue;
+
+        if (options.Date != "all" && item.Date != options.Date)
             continue;
 
         if (item.Subj.match(new RegExp(options.SubjRx, "i")) == null)

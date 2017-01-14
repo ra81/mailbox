@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.0
+// @version 	   1.01
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -62,6 +62,17 @@ function run() {
         var toFilter = $("<select id='toFilter' style='max-width:200px;'>");
         var tos = makeKeyValCount(mails, function (el) { return el.To; });
         toFilter.append(buildOptions(tos));
+        // фильтр по Date. даты сортируем по убыванию для удобства
+        var dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
+        var dates = makeKeyValCount(mails, function (el) { return el.Date; });
+        dates = dates.sort(function (a, b) {
+            if (a.Name > b.Name)
+                return -1;
+            if (a.Name < b.Name)
+                return 1;
+            return 0;
+        });
+        dateFilter.append(buildOptions(dates));
         // текстовый фильтр
         var subjFilter = $('<input id="subjFilter" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
         // события смены фильтров
@@ -72,6 +83,9 @@ function run() {
         toFilter.change(function () {
             doFilter($panel);
         });
+        dateFilter.change(function () {
+            doFilter($panel);
+        });
         // просто фильтруем.
         subjFilter.change(function () {
             doFilter($panel);
@@ -80,6 +94,7 @@ function run() {
         //
         $panel.append("<span>From: </span>").append(fromFilter);
         $panel.append("<span> To: </span>").append(toFilter);
+        $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
         return $panel;
     }
@@ -88,6 +103,7 @@ function getFilterOptions($panel) {
     return {
         From: $panel.find("#fromFilter").val(),
         To: $panel.find("#toFilter").val(),
+        Date: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
     };
 }
@@ -102,8 +118,17 @@ function parseRows($rows) {
             return $a.text().trim();
         return $(e).text();
     };
+    var fDate = function (i, e) {
+        var $a = $(e).find("a:last-child");
+        var txt = $(e).text();
+        if ($a.length > 0)
+            txt = $a.text().trim();
+        // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
+        return extractDate(txt);
+    };
     var from = $rows.find("td:nth-child(2)").map(f);
     var to = $rows.find("td:nth-child(3)").map(f);
+    var date = $rows.find("td:nth-child(4)").map(fDate);
     var subj = $rows.find("td:nth-child(5)").map(f);
     if (from.length !== to.length || from.length !== subj.length)
         throw new Error("Ошибка парсинга списка писем.");
@@ -113,10 +138,20 @@ function parseRows($rows) {
             $row: $r,
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
+            Date: date[i] != null ? date[i] : "unknown",
             Subj: subj[i].length > 0 ? subj[i] : "no subject"
         });
     }
     return mails;
+}
+// вернет дату или null если нельзя извлечь
+function extractDate(dateTimeStr) {
+    // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
+    var items = dateTimeStr.split("-");
+    if (items.length !== 2)
+        return null;
+    var dateStr = items[0].trim();
+    return dateStr.length > 0 ? dateStr : null;
 }
 function filter(items, options) {
     var res = [];
@@ -126,6 +161,8 @@ function filter(items, options) {
         if (options.From != "all" && item.From != options.From)
             continue;
         if (options.To != "all" && item.To != options.To)
+            continue;
+        if (options.Date != "all" && item.Date != options.Date)
             continue;
         if (item.Subj.match(new RegExp(options.SubjRx, "i")) == null)
             continue;
