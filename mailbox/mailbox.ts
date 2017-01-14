@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.01
+// @version 	   1.03
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -19,13 +19,13 @@ interface IMail {
     $row: JQuery;
     From: string;
     To: string;
-    Date: string;
+    Date: Date;
     Subj: string;
 }
 interface IFilterOptions {
     From: string;
     To: string;
-    Date: string;
+    DateStr: string;
     SubjRx: string;
 }
 interface IDictionary<T> {
@@ -105,16 +105,16 @@ function run() {
 
         // фильтр по Date. даты сортируем по убыванию для удобства
         let dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
-        let dates = makeKeyValCount<IMail>(mails, (el) => el.Date);
-        dates = dates.sort((a, b) => {
-            if (a.Name > b.Name)
+        let dates = makeKeyValCount<IMail>(mails, (el) => el.Date.toLocaleDateString(), (el) => el.Date.toDateString());
+        dates.sort((a, b) => {
+            if (new Date(a.Value) > new Date(b.Value))
                 return -1;
 
-            if (a.Name < b.Name)
+            if (new Date(a.Value) < new Date(b.Value))
                 return 1;
 
-            return 0;
-        })
+                return 0;
+        });
         dateFilter.append(buildOptions(dates));
 
         // текстовый фильтр
@@ -154,7 +154,7 @@ function getFilterOptions($panel: JQuery): IFilterOptions {
     return {
         From: $panel.find("#fromFilter").val(),
         To: $panel.find("#toFilter").val(),
-        Date: $panel.find("#dateFilter").val(),
+        DateStr: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
     }
 }
@@ -166,7 +166,7 @@ function parseRows($rows: JQuery): IMail[] {
     //$("tr.even").eq(0).find("td:nth-child(2) a").last().text().trim()
     // есть тупо текстовые От, Кому например поддержка. Они не парсятся через "a"
     // Если письмо новое там добавляется еще "a" и уже 2 их
-    let f = (i:number, e: Element) => {
+    let f = (i: number, e: Element) => {
         let $a = $(e).find("a:last-child");
         if ($a.length > 0)
             return $a.text().trim();
@@ -185,7 +185,8 @@ function parseRows($rows: JQuery): IMail[] {
 
     let from = $rows.find("td:nth-child(2)").map(f) as any as string[];
     let to = $rows.find("td:nth-child(3)").map(f) as any as string[];
-    let date = $rows.find("td:nth-child(4)").map(fDate) as any as string|null[];
+    
+    let date = $rows.find("td:nth-child(4)").map(fDate) as any as (Date|null)[];
     let subj = $rows.find("td:nth-child(5)").map(f) as any as string[];
     if (from.length !== to.length || from.length !== subj.length)
         throw new Error("Ошибка парсинга списка писем.");
@@ -197,7 +198,7 @@ function parseRows($rows: JQuery): IMail[] {
             $row: $r,
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
-            Date: date[i] != null ? date[i] as string : "unknown",
+            Date: date[i] != null ? date[i] as Date : new Date(),
             Subj: subj[i].length > 0 ? subj[i] : "no subject"
         });
     }
@@ -206,14 +207,37 @@ function parseRows($rows: JQuery): IMail[] {
 }
 
 // вернет дату или null если нельзя извлечь
-function extractDate(dateTimeStr: string) {
+function extractDate(dateTimeStr: string): Date|null {
     // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
     let items = dateTimeStr.split("-");
     if (items.length !== 2)
         return null;
 
     let dateStr = items[0].trim();
-    return dateStr.length > 0 ? dateStr : null;
+    if (dateStr.length === 0)
+        return null;
+
+    items = dateStr.split(" ");
+    if (items.length !== 3)
+        return null;
+
+    let d = numberfy(items[0]);
+    let m = month(items[1]);
+    let y = numberfy(items[2]);
+    if (d < 1 || m == null || y < 1)
+        return null;
+
+    return new Date(y, m, d);
+
+    function month(str: string) {
+        let mnth = ["янв", "февр", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "нояб", "дек"];
+        for (let i = 0; i < mnth.length; i++) {
+            if (str.indexOf(mnth[i]) === 0)
+                return i;
+        }
+
+        return null;
+    }
 }
 
 function filter(items: IMail[], options: IFilterOptions) {
@@ -229,7 +253,7 @@ function filter(items: IMail[], options: IFilterOptions) {
         if (options.To != "all" && item.To != options.To)
             continue;
 
-        if (options.Date != "all" && item.Date != options.Date)
+        if (options.DateStr != "all" && item.Date.getTime() != (new Date(options.DateStr)).getTime())
             continue;
 
         if (item.Subj.match(new RegExp(options.SubjRx, "i")) == null)
@@ -280,6 +304,23 @@ function getRealm(): string | null {
         return null;
 
     return m[1];
+}
+
+function numberfy(str: string): number {
+    // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
+
+    if (String(str) === 'Не огр.' ||
+        String(str) === 'Unlim.' ||
+        String(str) === 'Не обм.' ||
+        String(str) === 'N’est pas limité' ||
+        String(str) === 'No limitado' ||
+        String(str) === '无限' ||
+        String(str) === 'Nicht beschr.') {
+        return Number.POSITIVE_INFINITY;
+    } else {
+        return parseFloat(str.replace(/[\s\$\%\©]/g, "")) || -1;
+        //return parseFloat(String(variable).replace(/[\s\$\%\©]/g, "")) || 0; //- так сделано чтобы variable когда undef получалась строка "0"
+    }
 }
 
 $(document).ready(() => run());

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.01
+// @version 	   1.03
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -64,11 +64,11 @@ function run() {
         toFilter.append(buildOptions(tos));
         // фильтр по Date. даты сортируем по убыванию для удобства
         var dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
-        var dates = makeKeyValCount(mails, function (el) { return el.Date; });
-        dates = dates.sort(function (a, b) {
-            if (a.Name > b.Name)
+        var dates = makeKeyValCount(mails, function (el) { return el.Date.toLocaleDateString(); }, function (el) { return el.Date.toDateString(); });
+        dates.sort(function (a, b) {
+            if (new Date(a.Value) > new Date(b.Value))
                 return -1;
-            if (a.Name < b.Name)
+            if (new Date(a.Value) < new Date(b.Value))
                 return 1;
             return 0;
         });
@@ -103,7 +103,7 @@ function getFilterOptions($panel) {
     return {
         From: $panel.find("#fromFilter").val(),
         To: $panel.find("#toFilter").val(),
-        Date: $panel.find("#dateFilter").val(),
+        DateStr: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
     };
 }
@@ -138,7 +138,7 @@ function parseRows($rows) {
             $row: $r,
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
-            Date: date[i] != null ? date[i] : "unknown",
+            Date: date[i] != null ? date[i] : new Date(),
             Subj: subj[i].length > 0 ? subj[i] : "no subject"
         });
     }
@@ -151,7 +151,25 @@ function extractDate(dateTimeStr) {
     if (items.length !== 2)
         return null;
     var dateStr = items[0].trim();
-    return dateStr.length > 0 ? dateStr : null;
+    if (dateStr.length === 0)
+        return null;
+    items = dateStr.split(" ");
+    if (items.length !== 3)
+        return null;
+    var d = numberfy(items[0]);
+    var m = month(items[1]);
+    var y = numberfy(items[2]);
+    if (d < 1 || m == null || y < 1)
+        return null;
+    return new Date(y, m, d);
+    function month(str) {
+        var mnth = ["янв", "февр", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "нояб", "дек"];
+        for (var i = 0; i < mnth.length; i++) {
+            if (str.indexOf(mnth[i]) === 0)
+                return i;
+        }
+        return null;
+    }
 }
 function filter(items, options) {
     var res = [];
@@ -162,7 +180,7 @@ function filter(items, options) {
             continue;
         if (options.To != "all" && item.To != options.To)
             continue;
-        if (options.Date != "all" && item.Date != options.Date)
+        if (options.DateStr != "all" && item.Date.getTime() != (new Date(options.DateStr)).getTime())
             continue;
         if (item.Subj.match(new RegExp(options.SubjRx, "i")) == null)
             continue;
@@ -200,6 +218,21 @@ function getRealm() {
     if (m == null)
         return null;
     return m[1];
+}
+function numberfy(str) {
+    // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
+    if (String(str) === 'Не огр.' ||
+        String(str) === 'Unlim.' ||
+        String(str) === 'Не обм.' ||
+        String(str) === 'N’est pas limité' ||
+        String(str) === 'No limitado' ||
+        String(str) === '无限' ||
+        String(str) === 'Nicht beschr.') {
+        return Number.POSITIVE_INFINITY;
+    }
+    else {
+        return parseFloat(str.replace(/[\s\$\%\©]/g, "")) || -1;
+    }
 }
 $(document).ready(function () { return run(); });
 //# sourceMappingURL=mailbox.user.js.map
