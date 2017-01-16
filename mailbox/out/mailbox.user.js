@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.04
+// @version 	   1.06
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -27,10 +27,10 @@ function run() {
     $panel.change();
     // Функции
     //
-    // делает фильтрацию
+    // делает фильтрацию, возвращая массив фильтрованных строк
     function doFilter($panel) {
         var op = getFilterOptions($panel);
-        var filterMask = filter(mails, op);
+        var filterMask = buildMask(mails, op);
         for (var i = 0; i < mails.length; i++) {
             var mail = mails[i];
             if (filterMask[i])
@@ -40,6 +40,7 @@ function run() {
         }
         // сохраним опции
         storeOpions(op);
+        return filter(mails, filterMask);
     }
     function buildFilterPanel(mails) {
         function buildOptions(items) {
@@ -57,37 +58,78 @@ function run() {
         // если панели еще нет, то добавить её
         var panelHtml = "<div id='filterPanel' style='padding: 2px; border: 1px solid #0184D0; border-radius: 4px 4px 4px 4px; float:left; white-space:nowrap; color:#0184D0; display:none;'></div>";
         var $panel = $(panelHtml);
-        // фильтр по From
-        var fromFilter = $("<select id='fromFilter' class='option' style='max-width:200px;'>");
-        var froms = makeKeyValCount(mails, function (el) { return el.From; });
-        fromFilter.append(buildOptions(froms));
-        // фильтр по To
-        var toFilter = $("<select id='toFilter' class='option' style='max-width:200px;'>");
-        var tos = makeKeyValCount(mails, function (el) { return el.To; });
-        toFilter.append(buildOptions(tos));
-        // фильтр по Date. даты сортируем по убыванию для удобства
-        var dateFilter = $("<select id='dateFilter' class='option' style='max-width:200px;'>");
-        var dates = makeKeyValCount(mails, function (el) { return el.Date.toLocaleDateString(); }, function (el) { return el.Date.toDateString(); });
-        dates.sort(function (a, b) {
-            if (new Date(a.Value) > new Date(b.Value))
-                return -1;
-            if (new Date(a.Value) < new Date(b.Value))
-                return 1;
-            return 0;
-        });
-        dateFilter.append(buildOptions(dates));
-        // текстовый фильтр
-        var subjFilter = $('<input id="subjFilter" class="option" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
-        // запрос сразу всех данных по эффективности
-        var resetButton = $('<input type=button id=reset value="*">').css("color", "red");
-        // события смены фильтров
+        // фильтры
         //
+        var fromFilter = $("<select id='fromFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        var toFilter = $("<select id='toFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        var dateFilter = $("<select id='dateFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        var subjFilter = $('<input id="subjFilter" class="option" style="width:200px;"></input>').attr({ type: 'text', value: '' });
+        var resetBtn = $('<input type=button id=reset value="*">').css("color", "red");
+        var dymamicChbx = $("<input type='checkbox' id='chbxDynamic'>");
+        // события на обновление списка в селекте. Внутрь передаются данные. Массив по которому делать опции
+        fromFilter.on("filter:updateOps", function (event, data) {
+            var froms = makeKeyValCount(data.items, function (el) { return el.From; });
+            var val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(froms));
+            if (val != null)
+                $(this).val(val);
+        });
+        toFilter.on("filter:updateOps", function (event, data) {
+            var tos = makeKeyValCount(data.items, function (el) { return el.To; });
+            var val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(tos));
+            if (val != null)
+                $(this).val(val);
+        });
+        dateFilter.on("filter:updateOps", function (event, data) {
+            var dates = makeKeyValCount(data.items, function (el) { return el.Date.toLocaleDateString(); }, function (el) { return el.Date.toDateString(); });
+            dates.sort(function (a, b) {
+                if (new Date(a.Value) > new Date(b.Value))
+                    return -1;
+                if (new Date(a.Value) < new Date(b.Value))
+                    return 1;
+                return 0;
+            });
+            var val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(dates));
+            if (val != null)
+                $(this).val(val);
+        });
+        // вызовем события сразу чтобы забить значениями полным набором элементов.
+        fromFilter.trigger("filter:updateOps", { items: mails });
+        toFilter.trigger("filter:updateOps", { items: mails });
+        dateFilter.trigger("filter:updateOps", { items: mails });
         // не фильтрую по классам чтобы потом просто вызывать change для панели не вникая в детали реализации
-        $panel.on("change", function (event) { return doFilter($panel); });
-        resetButton.click(function (event) {
-            fromFilter.val("all");
-            toFilter.val("all");
-            dateFilter.val("all");
+        $panel.on("change", function (event) {
+            var el = $(event.target);
+            var m = doFilter($panel);
+            // когда мы поставили или убрали галку чекбокса, обязаны обновить селекты
+            // НО если сняли, то обновить надо полным списком, а если поствили то фильтрованным.
+            var mailsFiltered = dymamicChbx.prop("checked") ? m : mails;
+            if (el.is(dymamicChbx) || dymamicChbx.prop("checked")) {
+                var is = el.is(fromFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    fromFilter.trigger("filter:updateOps", { items: mailsFiltered });
+                is = el.is(toFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    toFilter.trigger("filter:updateOps", { items: mailsFiltered });
+                is = el.is(dateFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    dateFilter.trigger("filter:updateOps", { items: mailsFiltered });
+            }
+            return false;
+        });
+        $panel.on("dblclick", ".option", function (event) {
+            var el = event.target;
+            $(el).prop('selectedIndex', 0);
+            $panel.change();
+            return false;
+        });
+        // сброс фильтров
+        resetBtn.click(function (event) {
+            fromFilter.prop('selectedIndex', 0);
+            toFilter.prop('selectedIndex', 0);
+            dateFilter.prop('selectedIndex', 0);
             subjFilter.val("");
             // когда из кода меняешь то события не работают
             $panel.change();
@@ -99,14 +141,17 @@ function run() {
             toFilter.val(op.To);
             dateFilter.val(op.DateStr);
             subjFilter.val(op.SubjRx);
+            dymamicChbx.prop("checked", op.Dynamic);
         }
         // дополняем панель до конца элементами
         //
+        $panel.append("<span> </span>").append(dymamicChbx);
         $panel.append("<span>From: </span>").append(fromFilter);
         $panel.append("<span> To: </span>").append(toFilter);
         $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
-        $panel.append("<span> </span>").append(resetButton);
+        $panel.append("<span> </span>").append(resetBtn);
+        // на выходе панель нужно куда то добавить и вызвать событие change. она сама обновит себя и список
         return $panel;
     }
 }
@@ -116,6 +161,7 @@ function getFilterOptions($panel) {
         To: $panel.find("#toFilter").val(),
         DateStr: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
+        Dynamic: $panel.find("#chbxDynamic").prop("checked"),
     };
 }
 function parseRows($rows) {
@@ -182,7 +228,7 @@ function extractDate(dateTimeStr) {
         return null;
     }
 }
-function filter(items, options) {
+function buildMask(items, options) {
     var res = [];
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
@@ -197,6 +243,13 @@ function filter(items, options) {
             continue;
         res[i] = true;
     }
+    return res;
+}
+function filter(items, mask) {
+    var res = [];
+    for (var i = 0; i < items.length; i++)
+        if (mask[i])
+            res.push(items[i]);
     return res;
 }
 function makeKeyValCount(items, keySelector, valueSelector) {

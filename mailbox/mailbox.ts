@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.04
+// @version 	   1.06
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -27,6 +27,7 @@ interface IFilterOptions {
     To: string;
     DateStr: string;
     SubjRx: string;
+    Dynamic: boolean;
 }
 interface IDictionary<T> {
     [key: string]: T;
@@ -57,11 +58,11 @@ function run() {
 
     // Функции
     //
-    // делает фильтрацию
+    // делает фильтрацию, возвращая массив фильтрованных строк
     function doFilter($panel: JQuery) {
 
         let op = getFilterOptions($panel);
-        let filterMask = filter(mails, op);
+        let filterMask = buildMask(mails, op);
 
         for (let i = 0; i < mails.length; i++) {
             let mail = mails[i];
@@ -74,6 +75,8 @@ function run() {
 
         // сохраним опции
         storeOpions(op);
+
+        return filter(mails, filterMask);
     }
 
     function buildFilterPanel(mails: IMail[]) {
@@ -97,45 +100,93 @@ function run() {
         let panelHtml = "<div id='filterPanel' style='padding: 2px; border: 1px solid #0184D0; border-radius: 4px 4px 4px 4px; float:left; white-space:nowrap; color:#0184D0; display:none;'></div>";
         let $panel = $(panelHtml);
 
-        // фильтр по From
-        let fromFilter = $("<select id='fromFilter' class='option' style='max-width:200px;'>");
-        let froms = makeKeyValCount<IMail>(mails, (el) => el.From);
-        fromFilter.append(buildOptions(froms));
-
-        // фильтр по To
-        let toFilter = $("<select id='toFilter' class='option' style='max-width:200px;'>");
-        let tos = makeKeyValCount<IMail>(mails, (el) => el.To);
-        toFilter.append(buildOptions(tos));
-
-        // фильтр по Date. даты сортируем по убыванию для удобства
-        let dateFilter = $("<select id='dateFilter' class='option' style='max-width:200px;'>");
-        let dates = makeKeyValCount<IMail>(mails, (el) => el.Date.toLocaleDateString(), (el) => el.Date.toDateString());
-        dates.sort((a, b) => {
-            if (new Date(a.Value) > new Date(b.Value))
-                return -1;
-
-            if (new Date(a.Value) < new Date(b.Value))
-                return 1;
-
-                return 0;
-        });
-        dateFilter.append(buildOptions(dates));
-
-        // текстовый фильтр
-        let subjFilter = $('<input id="subjFilter" class="option" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
-
-        // запрос сразу всех данных по эффективности
-        let resetButton = $('<input type=button id=reset value="*">').css("color", "red");
+        // фильтры
+        //
+        let fromFilter = $("<select id='fromFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        let toFilter = $("<select id='toFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        let dateFilter = $("<select id='dateFilter' class='option' style='min-width: 100px; max-width:160px;'>");
+        let subjFilter = $('<input id="subjFilter" class="option" style="width:200px;"></input>').attr({ type: 'text', value: '' });
+        let resetBtn = $('<input type=button id=reset value="*">').css("color", "red");
+        let dymamicChbx = $("<input type='checkbox' id='chbxDynamic'>");
 
         // события смены фильтров
         //
-        // не фильтрую по классам чтобы потом просто вызывать change для панели не вникая в детали реализации
-        $panel.on("change", (event) => doFilter($panel));
+        type TData = { items: IMail[] };
 
-        resetButton.click((event) => {
-            fromFilter.val("all");
-            toFilter.val("all");
-            dateFilter.val("all");
+        // события на обновление списка в селекте. Внутрь передаются данные. Массив по которому делать опции
+        fromFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
+            let froms = makeKeyValCount<IMail>(data.items, (el) => el.From);
+            let val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(froms));
+
+            if (val != null)
+                $(this).val(val);
+        });
+        toFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
+            let tos = makeKeyValCount<IMail>(data.items, (el) => el.To);
+            let val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(tos));
+
+            if (val != null)
+                $(this).val(val);
+        });
+        dateFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
+            let dates = makeKeyValCount<IMail>(data.items, (el) => el.Date.toLocaleDateString(), (el) => el.Date.toDateString());
+            dates.sort((a, b) => {
+                if (new Date(a.Value) > new Date(b.Value))
+                    return -1;
+
+                if (new Date(a.Value) < new Date(b.Value))
+                    return 1;
+
+                return 0;
+            });
+            let val = $(this).val();
+            $(this).children().remove().end().append(buildOptions(dates));
+
+            if (val != null)
+                $(this).val(val);
+        });
+        // вызовем события сразу чтобы забить значениями полным набором элементов.
+        fromFilter.trigger("filter:updateOps", { items: mails });
+        toFilter.trigger("filter:updateOps", { items: mails });
+        dateFilter.trigger("filter:updateOps", { items: mails });
+
+        // не фильтрую по классам чтобы потом просто вызывать change для панели не вникая в детали реализации
+        $panel.on("change", function (this:Element, event: JQueryEventObject) {
+            let el = $(event.target);
+            let m = doFilter($panel);
+
+            // когда мы поставили или убрали галку чекбокса, обязаны обновить селекты
+            // НО если сняли, то обновить надо полным списком, а если поствили то фильтрованным.
+            let mailsFiltered = dymamicChbx.prop("checked") ? m : mails;
+            if (el.is(dymamicChbx) || dymamicChbx.prop("checked")) {
+                let is = el.is(fromFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    fromFilter.trigger("filter:updateOps", { items: mailsFiltered });
+
+                is = el.is(toFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    toFilter.trigger("filter:updateOps", { items: mailsFiltered });
+
+                is = el.is(dateFilter);
+                if (!is || (is && el.prop('selectedIndex') === 0))
+                    dateFilter.trigger("filter:updateOps", { items: mailsFiltered });
+            }
+            return false;
+        });
+        $panel.on("dblclick", ".option", function (this: Element, event: JQueryEventObject) {
+            let el = event.target;
+            $(el).prop('selectedIndex', 0);
+
+            $panel.change();
+            return false;
+        });
+        // сброс фильтров
+        resetBtn.click((event) => {
+            fromFilter.prop('selectedIndex', 0);
+            toFilter.prop('selectedIndex', 0);
+            dateFilter.prop('selectedIndex', 0);
             subjFilter.val("");
 
             // когда из кода меняешь то события не работают
@@ -149,16 +200,19 @@ function run() {
             toFilter.val(op.To);
             dateFilter.val(op.DateStr);
             subjFilter.val(op.SubjRx);
+            dymamicChbx.prop("checked", op.Dynamic);
         }
 
         // дополняем панель до конца элементами
         //
+        $panel.append("<span> </span>").append(dymamicChbx);
         $panel.append("<span>From: </span>").append(fromFilter);
         $panel.append("<span> To: </span>").append(toFilter);
         $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
-        $panel.append("<span> </span>").append(resetButton);
+        $panel.append("<span> </span>").append(resetBtn);
 
+        // на выходе панель нужно куда то добавить и вызвать событие change. она сама обновит себя и список
         return $panel;
     }
 }
@@ -169,6 +223,7 @@ function getFilterOptions($panel: JQuery): IFilterOptions {
         To: $panel.find("#toFilter").val(),
         DateStr: $panel.find("#dateFilter").val(),
         SubjRx: $panel.find("#subjFilter").val().toLowerCase(),
+        Dynamic: $panel.find("#chbxDynamic").prop("checked"),
     }
 }
 
@@ -253,7 +308,7 @@ function extractDate(dateTimeStr: string): Date|null {
     }
 }
 
-function filter(items: IMail[], options: IFilterOptions) {
+function buildMask(items: IMail[], options: IFilterOptions) {
 
     let res: boolean[] = [];
     for (let i = 0; i < items.length; i++) {
@@ -274,6 +329,15 @@ function filter(items: IMail[], options: IFilterOptions) {
 
         res[i] = true;
     }
+
+    return res;
+}
+
+function filter(items: IMail[], mask: boolean[]): IMail[] {
+    let res: IMail[] = [];
+    for (let i = 0; i < items.length; i++)
+        if (mask[i])
+            res.push(items[i]);
 
     return res;
 }
