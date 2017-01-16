@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.03
+// @version 	   1.04
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -52,6 +52,7 @@ function run() {
     let $panel = buildFilterPanel(mails);
     $("form").before($panel);
     $panel.show();
+    $panel.change();
     
 
     // Функции
@@ -70,6 +71,9 @@ function run() {
             else
                 mail.$row.hide();
         }
+
+        // сохраним опции
+        storeOpions(op);
     }
 
     function buildFilterPanel(mails: IMail[]) {
@@ -94,17 +98,17 @@ function run() {
         let $panel = $(panelHtml);
 
         // фильтр по From
-        let fromFilter = $("<select id='fromFilter' style='max-width:200px;'>");
+        let fromFilter = $("<select id='fromFilter' class='option' style='max-width:200px;'>");
         let froms = makeKeyValCount<IMail>(mails, (el) => el.From);
         fromFilter.append(buildOptions(froms));
 
         // фильтр по To
-        let toFilter = $("<select id='toFilter' style='max-width:200px;'>");
+        let toFilter = $("<select id='toFilter' class='option' style='max-width:200px;'>");
         let tos = makeKeyValCount<IMail>(mails, (el) => el.To);
         toFilter.append(buildOptions(tos));
 
         // фильтр по Date. даты сортируем по убыванию для удобства
-        let dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
+        let dateFilter = $("<select id='dateFilter' class='option' style='max-width:200px;'>");
         let dates = makeKeyValCount<IMail>(mails, (el) => el.Date.toLocaleDateString(), (el) => el.Date.toDateString());
         dates.sort((a, b) => {
             if (new Date(a.Value) > new Date(b.Value))
@@ -118,26 +122,34 @@ function run() {
         dateFilter.append(buildOptions(dates));
 
         // текстовый фильтр
-        let subjFilter = $('<input id="subjFilter" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
+        let subjFilter = $('<input id="subjFilter" class="option" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
+
+        // запрос сразу всех данных по эффективности
+        let resetButton = $('<input type=button id=reset value="*">').css("color", "red");
 
         // события смены фильтров
         //
-        fromFilter.change(function () {
-            doFilter($panel);
+        // не фильтрую по классам чтобы потом просто вызывать change для панели не вникая в детали реализации
+        $panel.on("change", (event) => doFilter($panel));
+
+        resetButton.click((event) => {
+            fromFilter.val("all");
+            toFilter.val("all");
+            dateFilter.val("all");
+            subjFilter.val("");
+
+            // когда из кода меняешь то события не работают
+            $panel.change();
         });
 
-        toFilter.change(function (this: HTMLSelectElement) {
-            doFilter($panel);
-        });
-
-        dateFilter.change(function (this: HTMLSelectElement) {
-            doFilter($panel);
-        });
-
-        // просто фильтруем.
-        subjFilter.change(function () {
-            doFilter($panel);
-        });
+        // загрузим опции со стораджа и выставим каждый фильтр в это значение
+        let op = loadOpions();
+        if (op != null) {
+            fromFilter.val(op.From);
+            toFilter.val(op.To);
+            dateFilter.val(op.DateStr);
+            subjFilter.val(op.SubjRx);
+        }
 
         // дополняем панель до конца элементами
         //
@@ -145,6 +157,7 @@ function run() {
         $panel.append("<span> To: </span>").append(toFilter);
         $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
+        $panel.append("<span> </span>").append(resetButton);
 
         return $panel;
     }
@@ -295,6 +308,20 @@ function makeKeyValCount<T>(items: T[], keySelector: (el: T) => string, valueSel
     return resArray;
 }
 
+function storeOpions(options: IFilterOptions) {
+    let key = "mail_" + getBox();  // mail_system, mail_inbox
+    localStorage.setItem(key, JSON.stringify(options));
+}
+
+function loadOpions(): IFilterOptions | null {
+    let key = "mail_" + getBox();  // mail_system, mail_inbox
+    let ops = localStorage.getItem(key);  // значение или null
+    if (ops == null)
+        return null;
+
+    return JSON.parse(ops) as IFilterOptions;
+}
+
 function getRealm(): string | null {
     // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
     // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
@@ -304,6 +331,12 @@ function getRealm(): string | null {
         return null;
 
     return m[1];
+}
+
+function getBox(): string {
+    // /fast/main/user/privat/persondata/message/system
+    let items = document.location.pathname.split("/");
+    return items[items.length-1];
 }
 
 function numberfy(str: string): number {
@@ -318,8 +351,10 @@ function numberfy(str: string): number {
         String(str) === 'Nicht beschr.') {
         return Number.POSITIVE_INFINITY;
     } else {
-        return parseFloat(str.replace(/[\s\$\%\©]/g, "")) || -1;
-        //return parseFloat(String(variable).replace(/[\s\$\%\©]/g, "")) || 0; //- так сделано чтобы variable когда undef получалась строка "0"
+        // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
+        // не будет эксепшнов
+        let n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
+        return isNaN(n) ? -1 : n;
     }
 }
 

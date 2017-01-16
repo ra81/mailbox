@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.03
+// @version 	   1.04
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -24,6 +24,7 @@ function run() {
     var $panel = buildFilterPanel(mails);
     $("form").before($panel);
     $panel.show();
+    $panel.change();
     // Функции
     //
     // делает фильтрацию
@@ -37,6 +38,8 @@ function run() {
             else
                 mail.$row.hide();
         }
+        // сохраним опции
+        storeOpions(op);
     }
     function buildFilterPanel(mails) {
         function buildOptions(items) {
@@ -55,15 +58,15 @@ function run() {
         var panelHtml = "<div id='filterPanel' style='padding: 2px; border: 1px solid #0184D0; border-radius: 4px 4px 4px 4px; float:left; white-space:nowrap; color:#0184D0; display:none;'></div>";
         var $panel = $(panelHtml);
         // фильтр по From
-        var fromFilter = $("<select id='fromFilter' style='max-width:200px;'>");
+        var fromFilter = $("<select id='fromFilter' class='option' style='max-width:200px;'>");
         var froms = makeKeyValCount(mails, function (el) { return el.From; });
         fromFilter.append(buildOptions(froms));
         // фильтр по To
-        var toFilter = $("<select id='toFilter' style='max-width:200px;'>");
+        var toFilter = $("<select id='toFilter' class='option' style='max-width:200px;'>");
         var tos = makeKeyValCount(mails, function (el) { return el.To; });
         toFilter.append(buildOptions(tos));
         // фильтр по Date. даты сортируем по убыванию для удобства
-        var dateFilter = $("<select id='dateFilter' style='max-width:200px;'>");
+        var dateFilter = $("<select id='dateFilter' class='option' style='max-width:200px;'>");
         var dates = makeKeyValCount(mails, function (el) { return el.Date.toLocaleDateString(); }, function (el) { return el.Date.toDateString(); });
         dates.sort(function (a, b) {
             if (new Date(a.Value) > new Date(b.Value))
@@ -74,28 +77,36 @@ function run() {
         });
         dateFilter.append(buildOptions(dates));
         // текстовый фильтр
-        var subjFilter = $('<input id="subjFilter" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
+        var subjFilter = $('<input id="subjFilter" class="option" style="max- width:400px;"></input>').attr({ type: 'text', value: '' });
+        // запрос сразу всех данных по эффективности
+        var resetButton = $('<input type=button id=reset value="*">').css("color", "red");
         // события смены фильтров
         //
-        fromFilter.change(function () {
-            doFilter($panel);
+        // не фильтрую по классам чтобы потом просто вызывать change для панели не вникая в детали реализации
+        $panel.on("change", function (event) { return doFilter($panel); });
+        resetButton.click(function (event) {
+            fromFilter.val("all");
+            toFilter.val("all");
+            dateFilter.val("all");
+            subjFilter.val("");
+            // когда из кода меняешь то события не работают
+            $panel.change();
         });
-        toFilter.change(function () {
-            doFilter($panel);
-        });
-        dateFilter.change(function () {
-            doFilter($panel);
-        });
-        // просто фильтруем.
-        subjFilter.change(function () {
-            doFilter($panel);
-        });
+        // загрузим опции со стораджа и выставим каждый фильтр в это значение
+        var op = loadOpions();
+        if (op != null) {
+            fromFilter.val(op.From);
+            toFilter.val(op.To);
+            dateFilter.val(op.DateStr);
+            subjFilter.val(op.SubjRx);
+        }
         // дополняем панель до конца элементами
         //
         $panel.append("<span>From: </span>").append(fromFilter);
         $panel.append("<span> To: </span>").append(toFilter);
         $panel.append("<span> Date: </span>").append(dateFilter);
         $panel.append("<span> Subject: </span>").append(subjFilter);
+        $panel.append("<span> </span>").append(resetButton);
         return $panel;
     }
 }
@@ -210,6 +221,17 @@ function makeKeyValCount(items, keySelector, valueSelector) {
     });
     return resArray;
 }
+function storeOpions(options) {
+    var key = "mail_" + getBox(); // mail_system, mail_inbox
+    localStorage.setItem(key, JSON.stringify(options));
+}
+function loadOpions() {
+    var key = "mail_" + getBox(); // mail_system, mail_inbox
+    var ops = localStorage.getItem(key); // значение или null
+    if (ops == null)
+        return null;
+    return JSON.parse(ops);
+}
 function getRealm() {
     // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
     // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
@@ -218,6 +240,11 @@ function getRealm() {
     if (m == null)
         return null;
     return m[1];
+}
+function getBox() {
+    // /fast/main/user/privat/persondata/message/system
+    var items = document.location.pathname.split("/");
+    return items[items.length - 1];
 }
 function numberfy(str) {
     // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
@@ -231,7 +258,10 @@ function numberfy(str) {
         return Number.POSITIVE_INFINITY;
     }
     else {
-        return parseFloat(str.replace(/[\s\$\%\©]/g, "")) || -1;
+        // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
+        // не будет эксепшнов
+        var n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
+        return isNaN(n) ? -1 : n;
     }
 }
 $(document).ready(function () { return run(); });
