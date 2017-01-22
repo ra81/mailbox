@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.07
+// @version 	   1.08
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
@@ -169,6 +169,20 @@ function run() {
     $("form").before($panel);
     $panel.show();
     $panel.change();
+    // изменим поведение штатной галочки выделения
+    // chbx.attr("onclick", null).off("click")
+    var $controlChbx = $("#messageListControlCheckbox");
+    $controlChbx.attr("onclick", "").off("click");
+    $controlChbx.on("change", function (event) {
+        var checked = $controlChbx.prop("checked");
+        // если unchecked то снимем галки ВООБЩЕ со всех
+        // иначе выставим тока на видимые строки
+        if (!checked)
+            $rows.each(function (i, e) { return $(e).find("input[name='message[]']").prop("checked", false); });
+        else
+            $rows.filter(":visible").each(function (i, e) { return $(e).find("input[name='message[]']").prop("checked", true); });
+        return false;
+    });
     // Функции
     //
     // делает фильтрацию, возвращая массив фильтрованных строк

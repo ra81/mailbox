@@ -44,7 +44,23 @@ function run() {
     $("form").before($panel);
     $panel.show();
     $panel.change();
-    
+
+    // изменим поведение штатной галочки выделения
+    // chbx.attr("onclick", null).off("click")
+    let $controlChbx = $("#messageListControlCheckbox");
+    $controlChbx.attr("onclick", "").off("click");
+    $controlChbx.on("change", (event) => {
+        let checked = $controlChbx.prop("checked") as boolean;
+
+        // если unchecked то снимем галки ВООБЩЕ со всех
+        // иначе выставим тока на видимые строки
+        if (!checked)
+            $rows.each((i, e) => $(e).find("input[name='message[]']").prop("checked", false));
+        else
+            $rows.filter(":visible").each((i, e) => $(e).find("input[name='message[]']").prop("checked", true));
+
+        return false;
+    });
 
     // Функции
     //
