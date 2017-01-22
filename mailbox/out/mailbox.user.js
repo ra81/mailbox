@@ -1,12 +1,156 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.06
+// @version 	   1.07
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/outbox
-// ==/UserScript==
+// @require        https://code.jquery.com/jquery-3.1.1.min.js
+// ==/UserScript== 
+// 
+// Набор вспомогательных функций для использования в других проектах. Универсальные
+//   /// <reference path= "../../_jsHelper/jsHelper/jsHelper.ts" />
+/**
+ * Проверяет наличие в словаре ключей. Шорт алиас для удобства.
+ * Если словарь не задать, вывалит исключение
+ * @param dict проверяемый словарь
+ */
+function isEmpty(dict) {
+    return Object.keys(dict).length === 0; // исключение на null
+}
+/**
+ * Конвертит словарь в простую текстовую строку вида "key:val, key1:val1"
+ * значения в строку конвертятся штатным toString()
+ * Создана чисто потому что в словарь нельзя засунуть методы.
+ * @param dict
+ */
+function dict2String(dict) {
+    if (isEmpty(dict))
+        return "";
+    var newItems = [];
+    for (var key in dict)
+        newItems.push(key + ":" + dict[key].toString());
+    return newItems.join(", ");
+}
+/**
+ * Проверяет что элемент есть в массиве.
+ * @param item
+ * @param arr массив НЕ null
+ */
+function isOneOf(item, arr) {
+    return arr.indexOf(item) >= 0;
+}
+// PARSE -------------------------------------------
+/**
+ * Выдергивает реалм из текущего href ссылки если это возможно.
+ */
+function getRealm() {
+    // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
+    // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
+    var rx = new RegExp(/https:\/\/virtonomic[A-Za-z]+\.[a-zA-Z]+\/([a-zA-Z]+)\/.+/ig);
+    var m = rx.exec(document.location.href);
+    if (m == null)
+        return null;
+    return m[1];
+}
+/**
+ * Парсит id компании со страницы
+ */
+function getCompanyId() {
+    var str = matchedOrError($("a.dashboard").attr("href"), /\d+/);
+    return numberfyOrError(str);
+}
+/**
+ * Оцифровывает строку. Возвращает всегда либо число или Number.POSITIVE_INFINITY либо -1 если отпарсить не вышло.
+ * @param variable любая строка.
+ */
+function numberfy(str) {
+    // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
+    if (String(str) === 'Не огр.' ||
+        String(str) === 'Unlim.' ||
+        String(str) === 'Не обм.' ||
+        String(str) === 'N’est pas limité' ||
+        String(str) === 'No limitado' ||
+        String(str) === '无限' ||
+        String(str) === 'Nicht beschr.') {
+        return Number.POSITIVE_INFINITY;
+    }
+    else {
+        // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
+        // не будет эксепшнов
+        var n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
+        return isNaN(n) ? -1 : n;
+    }
+}
+/**
+ * Пробуем оцифровать данные но если они выходят как Number.POSITIVE_INFINITY или <= minVal, валит ошибку.
+   смысл в быстром вываливании ошибки если парсинг текста должен дать число
+ * @param value строка являющая собой число больше minVal
+ * @param minVal ограничение снизу. Число.
+ * @param infinity разрешена ли бесконечность
+ */
+function numberfyOrError(str, minVal, infinity) {
+    if (minVal === void 0) { minVal = 0; }
+    if (infinity === void 0) { infinity = false; }
+    var n = numberfy(str);
+    if (!infinity && (n === Number.POSITIVE_INFINITY || n === Number.NEGATIVE_INFINITY))
+        throw new RangeError("Получили бесконечность, что запрещено.");
+    if (n <= minVal)
+        throw new RangeError("Число должно быть > " + minVal);
+    return n;
+}
+/**
+ * Ищет паттерн в строке. Предполагая что паттерн там обязательно есть 1 раз. Если
+ * нет или случился больше раз, валим ошибку
+ * @param str строка в которой ищем
+ * @param rx паттерн который ищем
+ */
+function matchedOrError(str, rx, errMsg) {
+    var m = str.match(rx);
+    if (m == null)
+        throw new Error(errMsg || "\u041F\u0430\u0442\u0442\u0435\u0440\u043D " + rx + " \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 " + str);
+    if (m.length > 1)
+        throw new Error(errMsg || "\u041F\u0430\u0442\u0442\u0435\u0440\u043D " + rx + " \u043D\u0430\u0439\u0434\u0435\u043D \u0432 " + str + " " + m.length + " \u0440\u0430\u0437 \u0432\u043C\u0435\u0441\u0442\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E 1");
+    return m[0];
+}
+// JQUERY ----------------------------------------
+/**
+ * Возвращает ближайшего родителя по имени Тэга
+   работает как и closest. Если родитель не найден то не возвращает ничего для данного элемента
+    то есть есть шанс что было 10 а родителей нашли 4 и их вернули.
+ * @param items набор элементов JQuery
+ * @param tagname имя тэга. tr, td, span и так далее
+ */
+function closestByTagName(items, tagname) {
+    var tag = tagname.toUpperCase();
+    var found = [];
+    for (var i = 0; i < items.length; i++) {
+        var node = items[i];
+        while ((node = node.parentNode) && node.nodeName != tag) { }
+        ;
+        if (node)
+            found.push(node);
+    }
+    return $(found);
+}
+/**
+ * Для заданного элемента, находит все непосредственно расположенные в нем текстовые ноды и возвращает их текст.
+   очень удобен для извлечения непосредственного текста из тэга БЕЗ текста дочерних нодов
+ * @param item 1 объект типа JQuery
+ */
+function getOnlyText(item) {
+    // просто children() не отдает текстовые ноды.
+    var $childrenNodes = item.contents();
+    var res = [];
+    for (var i = 0; i < $childrenNodes.length; i++) {
+        var el = $childrenNodes.get(i);
+        if (el.nodeType === 3)
+            res.push($(el).text()); // так как в разных браузерах текст запрашивается по разному, 
+    }
+    return res;
+}
+/// <reference path= "../../_jsHelper/jsHelper/jsHelper.ts" />
 function run() {
     var $ = jQuery;
     var realm = getRealm();
@@ -18,7 +162,7 @@ function run() {
     //}
     // работа
     var $mailTable = $("table.grid");
-    var $rows = $mailTable.find("tr.even, tr.odd").closest("tr");
+    var $rows = closestByTagName($mailTable.find("input[name='message[]']"), "tr");
     var mails = parseRows($rows);
     // создаем панельку, и шоутайм.
     var $panel = buildFilterPanel(mails);
@@ -43,8 +187,13 @@ function run() {
         return filter(mails, filterMask);
     }
     function buildFilterPanel(mails) {
-        function buildOptions(items) {
-            var optionsHtml = '<option value="all", label="all">all</option>';
+        function buildOptions(items, first) {
+            if (first === void 0) { first = ["all"]; }
+            var optionsHtml = '';
+            // некоторые общие опции всегда существующие
+            for (var i = 0; i < first.length; i++)
+                optionsHtml += "<option value=\"" + first[i] + "\", label=\"" + first[i] + "\">" + first[i] + "</option>";
+            // собственно элементы
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
                 var lbl = item.Count > 1 ? "label=\"" + item.Name + " (" + item.Count + ")\"" : "label=\"" + item.Name + "\"";
@@ -69,13 +218,27 @@ function run() {
         // события на обновление списка в селекте. Внутрь передаются данные. Массив по которому делать опции
         fromFilter.on("filter:updateOps", function (event, data) {
             var froms = makeKeyValCount(data.items, function (el) { return el.From; });
+            froms.sort(function (a, b) {
+                if (a.Value > b.Value)
+                    return 1;
+                if (a.Value < b.Value)
+                    return -1;
+                return 0;
+            });
             var val = $(this).val();
-            $(this).children().remove().end().append(buildOptions(froms));
+            $(this).children().remove().end().append(buildOptions(froms, ["all", "new"]));
             if (val != null)
                 $(this).val(val);
         });
         toFilter.on("filter:updateOps", function (event, data) {
             var tos = makeKeyValCount(data.items, function (el) { return el.To; });
+            tos.sort(function (a, b) {
+                if (a.Value > b.Value)
+                    return 1;
+                if (a.Value < b.Value)
+                    return -1;
+                return 0;
+            });
             var val = $(this).val();
             $(this).children().remove().end().append(buildOptions(tos));
             if (val != null)
@@ -187,6 +350,7 @@ function parseRows($rows) {
     var to = $rows.find("td:nth-child(3)").map(f);
     var date = $rows.find("td:nth-child(4)").map(fDate);
     var subj = $rows.find("td:nth-child(5)").map(f);
+    var isUnread = $rows.map(function (i, e) { return $(e).find("a.new_message").length > 0; });
     if (from.length !== to.length || from.length !== subj.length)
         throw new Error("Ошибка парсинга списка писем.");
     for (var i = 0; i < $rows.length; i++) {
@@ -196,7 +360,8 @@ function parseRows($rows) {
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
             Date: date[i] != null ? date[i] : new Date(),
-            Subj: subj[i].length > 0 ? subj[i] : "no subject"
+            Subj: subj[i].length > 0 ? subj[i] : "no subject",
+            IsUnread: isUnread[i]
         });
     }
     return mails;
@@ -233,8 +398,17 @@ function buildMask(items, options) {
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
         res[i] = false;
-        if (options.From != "all" && item.From != options.From)
-            continue;
+        switch (options.From) {
+            case "all":
+                break;
+            case "new":
+                if (!item.IsUnread)
+                    continue;
+                break;
+            default:
+                if (item.From != options.From)
+                    continue;
+        }
         if (options.To != "all" && item.To != options.To)
             continue;
         if (options.DateStr != "all" && item.Date.getTime() != (new Date(options.DateStr)).getTime())
@@ -285,37 +459,10 @@ function loadOpions() {
         return null;
     return JSON.parse(ops);
 }
-function getRealm() {
-    // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
-    // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
-    var rx = new RegExp(/https:\/\/virtonomic[A-Za-z]+\.[a-zA-Z]+\/([a-zA-Z]+)\/.+/ig);
-    var m = rx.exec(document.location.href);
-    if (m == null)
-        return null;
-    return m[1];
-}
 function getBox() {
     // /fast/main/user/privat/persondata/message/system
     var items = document.location.pathname.split("/");
     return items[items.length - 1];
-}
-function numberfy(str) {
-    // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
-    if (String(str) === 'Не огр.' ||
-        String(str) === 'Unlim.' ||
-        String(str) === 'Не обм.' ||
-        String(str) === 'N’est pas limité' ||
-        String(str) === 'No limitado' ||
-        String(str) === '无限' ||
-        String(str) === 'Nicht beschr.') {
-        return Number.POSITIVE_INFINITY;
-    }
-    else {
-        // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
-        // не будет эксепшнов
-        var n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
-        return isNaN(n) ? -1 : n;
-    }
 }
 $(document).ready(function () { return run(); });
 //# sourceMappingURL=mailbox.user.js.map

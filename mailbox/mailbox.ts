@@ -1,14 +1,6 @@
-﻿// ==UserScript==
-// @name           Virtonomica: mailbox
-// @namespace      https://github.com/ra81/mailbox
-// @version 	   1.06
-// @description    Фильтрация писем в почтовом ящике
-// @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
-// @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
-// @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/outbox
-// ==/UserScript==
+﻿
 
-//debugger;а
+/// <reference path= "../../_jsHelper/jsHelper/jsHelper.ts" />
 
 interface TNameValueCount {
     Name: string;
@@ -21,6 +13,7 @@ interface IMail {
     To: string;
     Date: Date;
     Subj: string;
+    IsUnread: boolean;
 }
 interface IFilterOptions {
     From: string;
@@ -28,9 +21,6 @@ interface IFilterOptions {
     DateStr: string;
     SubjRx: string;
     Dynamic: boolean;
-}
-interface IDictionary<T> {
-    [key: string]: T;
 }
 
 function run() {
@@ -46,7 +36,7 @@ function run() {
 
     // работа
     let $mailTable = $("table.grid");
-    let $rows = $mailTable.find("tr.even, tr.odd").closest("tr");
+    let $rows = closestByTagName($mailTable.find("input[name='message[]']"), "tr");
     let mails = parseRows($rows);
 
     // создаем панельку, и шоутайм.
@@ -81,8 +71,14 @@ function run() {
 
     function buildFilterPanel(mails: IMail[]) {
 
-        function buildOptions (items: TNameValueCount[]) {
-            let optionsHtml = '<option value="all", label="all">all</option>';
+        function buildOptions (items: TNameValueCount[], first: string[] = ["all"]) {
+            let optionsHtml = '';
+
+            // некоторые общие опции всегда существующие
+            for (let i = 0; i < first.length; i++)
+                optionsHtml += `<option value="${first[i]}", label="${first[i]}">${first[i]}</option>`;
+
+            // собственно элементы
             for (let i = 0; i < items.length; i++) {
                 let item = items[i];
                 let lbl = item.Count > 1 ? `label="${item.Name} (${item.Count})"` : `label="${item.Name}"`;
@@ -116,14 +112,34 @@ function run() {
         // события на обновление списка в селекте. Внутрь передаются данные. Массив по которому делать опции
         fromFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
             let froms = makeKeyValCount<IMail>(data.items, (el) => el.From);
+            froms.sort((a, b) => {
+                if (a.Value > b.Value)
+                    return 1;
+
+                if (a.Value < b.Value)
+                    return -1;
+
+                return 0;
+            });
+
             let val = $(this).val();
-            $(this).children().remove().end().append(buildOptions(froms));
+            $(this).children().remove().end().append(buildOptions(froms, ["all", "new"]));
 
             if (val != null)
                 $(this).val(val);
         });
         toFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
             let tos = makeKeyValCount<IMail>(data.items, (el) => el.To);
+            tos.sort((a, b) => {
+                if (a.Value > b.Value)
+                    return 1;
+
+                if (a.Value < b.Value)
+                    return -1;
+
+                return 0;
+            });
+
             let val = $(this).val();
             $(this).children().remove().end().append(buildOptions(tos));
 
@@ -256,6 +272,8 @@ function parseRows($rows: JQuery): IMail[] {
     
     let date = $rows.find("td:nth-child(4)").map(fDate) as any as (Date|null)[];
     let subj = $rows.find("td:nth-child(5)").map(f) as any as string[];
+    let isUnread = $rows.map((i, e) => $(e).find("a.new_message").length > 0) as any as boolean[];
+
     if (from.length !== to.length || from.length !== subj.length)
         throw new Error("Ошибка парсинга списка писем.");
 
@@ -267,7 +285,8 @@ function parseRows($rows: JQuery): IMail[] {
             From: from[i].length > 0 ? from[i] : "system",
             To: to[i].length > 0 ? to[i] : "system",
             Date: date[i] != null ? date[i] as Date : new Date(),
-            Subj: subj[i].length > 0 ? subj[i] : "no subject"
+            Subj: subj[i].length > 0 ? subj[i] : "no subject",
+            IsUnread: isUnread[i]
         });
     }
 
@@ -315,8 +334,17 @@ function buildMask(items: IMail[], options: IFilterOptions) {
         let item = items[i];
         res[i] = false;
 
-        if (options.From != "all" && item.From != options.From)
-            continue;
+        switch (options.From) {
+            case "all":
+                break;
+
+            case "new":
+                if (!item.IsUnread) continue;
+                break;
+
+            default:
+                if (item.From != options.From) continue;
+        }
 
         if (options.To != "all" && item.To != options.To)
             continue;
@@ -386,40 +414,11 @@ function loadOpions(): IFilterOptions | null {
     return JSON.parse(ops) as IFilterOptions;
 }
 
-function getRealm(): string | null {
-    // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
-    // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
-    let rx = new RegExp(/https:\/\/virtonomic[A-Za-z]+\.[a-zA-Z]+\/([a-zA-Z]+)\/.+/ig);
-    let m = rx.exec(document.location.href);
-    if (m == null)
-        return null;
-
-    return m[1];
-}
-
 function getBox(): string {
     // /fast/main/user/privat/persondata/message/system
     let items = document.location.pathname.split("/");
     return items[items.length-1];
 }
 
-function numberfy(str: string): number {
-    // возвращает либо число полученно из строки, либо БЕСКОНЕЧНОСТЬ, либо -1 если не получилось преобразовать.
-
-    if (String(str) === 'Не огр.' ||
-        String(str) === 'Unlim.' ||
-        String(str) === 'Не обм.' ||
-        String(str) === 'N’est pas limité' ||
-        String(str) === 'No limitado' ||
-        String(str) === '无限' ||
-        String(str) === 'Nicht beschr.') {
-        return Number.POSITIVE_INFINITY;
-    } else {
-        // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
-        // не будет эксепшнов
-        let n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
-        return isNaN(n) ? -1 : n;
-    }
-}
 
 $(document).ready(() => run());
