@@ -129,10 +129,10 @@ function run() {
         fromFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
             let froms = makeKeyValCount<IMail>(data.items, (el) => el.From);
             froms.sort((a, b) => {
-                if (a.Value > b.Value)
+                if (a.Value.toLocaleLowerCase() > b.Value.toLocaleLowerCase())
                     return 1;
 
-                if (a.Value < b.Value)
+                if (a.Value.toLocaleLowerCase() < b.Value.toLocaleLowerCase())
                     return -1;
 
                 return 0;
@@ -147,10 +147,10 @@ function run() {
         toFilter.on("filter:updateOps", function (this: Element, event: JQueryEventObject, data: TData) {
             let tos = makeKeyValCount<IMail>(data.items, (el) => el.To);
             tos.sort((a, b) => {
-                if (a.Value > b.Value)
+                if (a.Value.toLocaleLowerCase() > b.Value.toLocaleLowerCase())
                     return 1;
 
-                if (a.Value < b.Value)
+                if (a.Value.toLocaleLowerCase() < b.Value.toLocaleLowerCase())
                     return -1;
 
                 return 0;
@@ -307,40 +307,6 @@ function parseRows($rows: JQuery): IMail[] {
     }
 
     return mails;
-}
-
-// вернет дату или null если нельзя извлечь
-function extractDate(dateTimeStr: string): Date|null {
-    // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
-    let items = dateTimeStr.split("-");
-    if (items.length !== 2)
-        return null;
-
-    let dateStr = items[0].trim();
-    if (dateStr.length === 0)
-        return null;
-
-    items = dateStr.split(" ");
-    if (items.length !== 3)
-        return null;
-
-    let d = numberfy(items[0]);
-    let m = month(items[1]);
-    let y = numberfy(items[2]);
-    if (d < 1 || m == null || y < 1)
-        return null;
-
-    return new Date(y, m, d);
-
-    function month(str: string) {
-        let mnth = ["янв", "февр", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "нояб", "дек"];
-        for (let i = 0; i < mnth.length; i++) {
-            if (str.indexOf(mnth[i]) === 0)
-                return i;
-        }
-
-        return null;
-    }
 }
 
 function buildMask(items: IMail[], options: IFilterOptions) {

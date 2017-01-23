@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name           Virtonomica: mailbox
 // @namespace      https://github.com/ra81/mailbox
-// @version 	   1.08
+// @version 	   1.09
 // @description    Фильтрация писем в почтовом ящике
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/system
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/inbox
 // @include        https://*virtonomic*.*/*/main/user/privat/persondata/message/outbox
-// @require        https://code.jquery.com/jquery-3.1.1.min.js
+// @require        https://code.jquery.com/jquery-1.11.1.min.js
 // ==/UserScript== 
 // 
 // Набор вспомогательных функций для использования в других проектах. Универсальные
@@ -42,6 +42,13 @@ function isOneOf(item, arr) {
     return arr.indexOf(item) >= 0;
 }
 // PARSE -------------------------------------------
+/**
+ * удаляет из строки все денежные и специальные символы типо процента и пробелы между цифрами
+ * @param str
+ */
+function cleanStr(str) {
+    return str.replace(/[\s\$\%\©]/g, "");
+}
 /**
  * Выдергивает реалм из текущего href ссылки если это возможно.
  */
@@ -79,7 +86,7 @@ function numberfy(str) {
     else {
         // если str будет undef null или что то страшное, то String() превратит в строку после чего парсинг даст NaN
         // не будет эксепшнов
-        var n = parseFloat(String(str).replace(/[\s\$\%\©]/g, ""));
+        var n = parseFloat(cleanStr(String(str)));
         return isNaN(n) ? -1 : n;
     }
 }
@@ -113,6 +120,114 @@ function matchedOrError(str, rx, errMsg) {
     if (m.length > 1)
         throw new Error(errMsg || "\u041F\u0430\u0442\u0442\u0435\u0440\u043D " + rx + " \u043D\u0430\u0439\u0434\u0435\u043D \u0432 " + str + " " + m.length + " \u0440\u0430\u0437 \u0432\u043C\u0435\u0441\u0442\u043E \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E 1");
     return m[0];
+}
+/**
+ * Пробуем прогнать регулярное выражение на строку, если не прошло, то вывалит ошибку.
+ * иначе вернет массив. 0 элемент это найденная подстрока, остальные это найденные группы ()
+ * @param str
+ * @param rx
+ * @param errMsg
+ */
+function execOrError(str, rx, errMsg) {
+    var m = rx.exec(str);
+    if (m == null)
+        throw new Error(errMsg || "\u041F\u0430\u0442\u0442\u0435\u0440\u043D " + rx + " \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 " + str);
+    return m;
+}
+/**
+ * из строки пробует извлечь все вещественные числа. Рекомендуется применять ТОЛЬКО для извлечения из текстовых строк.
+ * для простого парсинга числа пойдет numberfy
+ * Если их нет вернет null
+ * @param str
+ */
+function extractFloatPositive(str) {
+    var m = cleanStr(str).match(/\d+\.\d+/ig);
+    if (m == null)
+        return null;
+    var n = m.map(function (i, e) { return numberfyOrError($(e).text(), -1); });
+    return n;
+}
+/**
+ * По текстовой строке возвращает номер месяца начиная с 0 для января. Либо null
+ * @param str очищенная от пробелов и лишних символов строка
+ */
+function monthFromStr(str) {
+    var mnth = ["янв", "февр", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "нояб", "дек"];
+    for (var i = 0; i < mnth.length; i++) {
+        if (str.indexOf(mnth[i]) === 0)
+            return i;
+    }
+    return null;
+}
+/**
+ * По типовой игровой строке даты вида 10 января 55 г., 3 февраля 2017 - 22.10.12
+ * выдергивает именно дату и возвращает в виде объекта даты
+ * @param str
+ */
+function extractDate(str) {
+    var dateRx = /^(\d{1,2})\s+([а-я]+)\s+(\d{1,4})/i;
+    var m = dateRx.exec(str);
+    if (m == null)
+        return null;
+    var d = parseInt(m[1]);
+    var mon = monthFromStr(m[2]);
+    if (mon == null)
+        return null;
+    var y = parseInt(m[3]);
+    return new Date(y, mon, d);
+}
+/**
+ * из даты формирует короткую строку типа 01.12.2017
+ * @param date
+ */
+function dateToShort(date) {
+    var d = date.getDate();
+    var m = date.getMonth() + 1;
+    var yyyy = date.getFullYear();
+    var dStr = d < 10 ? "0" + d : d.toString();
+    var mStr = m < 10 ? "0" + m : m.toString();
+    return dStr + "." + mStr + "." + yyyy;
+}
+/**
+ * из строки вида 01.12.2017 формирует дату
+ * @param str
+ */
+function dateFromShort(str) {
+    var items = str.split(".");
+    var d = parseInt(items[0]);
+    if (d <= 0)
+        throw new Error("дата неправильная.");
+    var m = parseInt(items[1]) - 1;
+    if (m < 0)
+        throw new Error("месяц неправильная.");
+    var y = parseInt(items[2]);
+    if (y < 0)
+        throw new Error("год неправильная.");
+    return new Date(y, m, d);
+}
+var urlUnitMainRx = /\/\w+\/main\/unit\/view\/\d+\/?$/i;
+var urlTradeHallRx = /\/[a-z]+\/main\/unit\/view\/\d+\/trading_hall\/?/i;
+var urlVisitorsHistoryRx = /\/[a-z]+\/main\/unit\/view\/\d+\/visitors_history\/?/i;
+function isMyUnitList() {
+    // для ссылки обязательно завершающий unit_list мы так решили
+    var rx = /\/\w+\/main\/company\/view\/\d+\/unit_list\/?$/ig;
+    if (rx.test(document.location.pathname) === false)
+        return false;
+    // помимо ссылки мы можем находиться на чужой странице юнитов
+    if ($("#mainContent > table.unit-top").length === 0
+        || $("#mainContent > table.unit-list-2014").length === 0)
+        return false;
+    return true;
+}
+function isUnitMain() {
+    return urlUnitMainRx.test(document.location.pathname);
+}
+function isShop() {
+    var $a = $("ul.tabu a[href$=trading_hall]");
+    return $a.length === 1;
+}
+function isVisitorsHistory() {
+    return urlVisitorsHistoryRx.test(document.location.pathname);
 }
 // JQUERY ----------------------------------------
 /**
@@ -149,6 +264,31 @@ function getOnlyText(item) {
             res.push($(el).text()); // так как в разных браузерах текст запрашивается по разному, 
     }
     return res;
+}
+/**
+ * Пробует найти ровно 1 элемент для заданного селектора. если не нашло или нашло больше валит ошибку
+ * @param $item
+ * @param selector
+ */
+function oneOrError($item, selector) {
+    var $one = $item.find(selector);
+    if ($one.length != 1)
+        throw new Error("\u041D\u0430\u0439\u0434\u0435\u043D\u043E " + $one.length + " \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u0432 \u0432\u043C\u0435\u0441\u0442\u043E 1 \u0434\u043B\u044F \u0441\u0435\u043B\u0435\u043A\u0442\u043E\u0440\u0430 " + selector);
+    return $one;
+}
+// COMMON ----------------------------------------
+var $xioDebug = false;
+function logDebug(msg) {
+    var args = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        args[_i - 1] = arguments[_i];
+    }
+    if (!$xioDebug)
+        return;
+    if (args.length === 0)
+        console.log(msg);
+    else
+        console.log(msg, args);
 }
 /// <reference path= "../../_jsHelper/jsHelper/jsHelper.ts" />
 function run() {
@@ -233,9 +373,9 @@ function run() {
         fromFilter.on("filter:updateOps", function (event, data) {
             var froms = makeKeyValCount(data.items, function (el) { return el.From; });
             froms.sort(function (a, b) {
-                if (a.Value > b.Value)
+                if (a.Value.toLocaleLowerCase() > b.Value.toLocaleLowerCase())
                     return 1;
-                if (a.Value < b.Value)
+                if (a.Value.toLocaleLowerCase() < b.Value.toLocaleLowerCase())
                     return -1;
                 return 0;
             });
@@ -247,9 +387,9 @@ function run() {
         toFilter.on("filter:updateOps", function (event, data) {
             var tos = makeKeyValCount(data.items, function (el) { return el.To; });
             tos.sort(function (a, b) {
-                if (a.Value > b.Value)
+                if (a.Value.toLocaleLowerCase() > b.Value.toLocaleLowerCase())
                     return 1;
-                if (a.Value < b.Value)
+                if (a.Value.toLocaleLowerCase() < b.Value.toLocaleLowerCase())
                     return -1;
                 return 0;
             });
@@ -379,33 +519,6 @@ function parseRows($rows) {
         });
     }
     return mails;
-}
-// вернет дату или null если нельзя извлечь
-function extractDate(dateTimeStr) {
-    // если у нас не разбивается то будет 1 элемент все равно. возможно пустой
-    var items = dateTimeStr.split("-");
-    if (items.length !== 2)
-        return null;
-    var dateStr = items[0].trim();
-    if (dateStr.length === 0)
-        return null;
-    items = dateStr.split(" ");
-    if (items.length !== 3)
-        return null;
-    var d = numberfy(items[0]);
-    var m = month(items[1]);
-    var y = numberfy(items[2]);
-    if (d < 1 || m == null || y < 1)
-        return null;
-    return new Date(y, m, d);
-    function month(str) {
-        var mnth = ["янв", "февр", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "нояб", "дек"];
-        for (var i = 0; i < mnth.length; i++) {
-            if (str.indexOf(mnth[i]) === 0)
-                return i;
-        }
-        return null;
-    }
 }
 function buildMask(items, options) {
     var res = [];
