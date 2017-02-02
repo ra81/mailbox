@@ -286,8 +286,8 @@ function parseRows($rows: JQuery): IMail[] {
     let from = $rows.find("td:nth-child(2)").map(f) as any as string[];
     let to = $rows.find("td:nth-child(3)").map(f) as any as string[];
     
-    let date = $rows.find("td:nth-child(4)").map(fDate) as any as (Date|null)[];
-    let subj = $rows.find("td:nth-child(5)").map(f) as any as string[];
+    let date = $rows.find("td:nth-child(4)").map(fDate) as any as (Date | null)[];
+    let subj = $rows.find("td:nth-child(5)").map((i, e) => $(e).text().trim()) as any as string[];
     let isUnread = $rows.map((i, e) => $(e).find("a.new_message").length > 0) as any as boolean[];
 
     if (from.length !== to.length || from.length !== subj.length)
