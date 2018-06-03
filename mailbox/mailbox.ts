@@ -1,7 +1,4 @@
 ﻿
-
-/// <reference path= "../../_jsHelper/jsHelper/jsHelper.ts" />
-
 interface TNameValueCount {
     Name: string;
     Value: string;
@@ -26,7 +23,7 @@ interface IFilterOptions {
 function run() {
     let $ = jQuery;
     let realm = getRealm();
-
+    console.log("box");
     // закончить если мы не на той странице
     //let pathRx = new RegExp(/\/([a-zA-Z]+)\/main\/company\/view\/\d+(?:\/unit_list\/?)?$/ig);
     //if (pathRx.test(document.location.pathname) === false) {
@@ -402,5 +399,60 @@ function getBox(): string {
     return items[items.length-1];
 }
 
+
+interface IDictionary<T> {
+    [key: string]: T;
+}
+interface IDictionaryN<T> {
+    [key: number]: T;
+}
+function getRealm(): string | null {
+    // https://*virtonomic*.*/*/main/globalreport/marketing/by_trade_at_cities/*
+    // https://*virtonomic*.*/*/window/globalreport/marketing/by_trade_at_cities/*
+    let rx = new RegExp(/https:\/\/virtonomic[A-Za-z]+\.[a-zA-Z]+\/([a-zA-Z]+)\/.+/ig);
+    let m = rx.exec(document.location.href);
+    if (m == null)
+        return null;
+
+    return m[1];
+}
+function closestByTagName(items: JQuery, tagname: string): JQuery {
+    let tag = tagname.toUpperCase();
+
+    let found: Node[] = [];
+    for (let i = 0; i < items.length; i++) {
+        let node: Node = items[i];
+        while ((node = node.parentNode) && node.nodeName != tag) { };
+
+        if (node)
+            found.push(node);
+    }
+
+    return $(found);
+}
+function monthFromStr(str: string) {
+    let mnth = ["январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"];
+    for (let i = 0; i < mnth.length; i++) {
+        if (str.indexOf(mnth[i]) === 0)
+            return i;
+    }
+
+    return null;
+}
+function extractDate(str: string): Date | null {
+    let dateRx = /^(\d{1,2})\s+([а-я]+)\s+(\d{1,4})/i;
+    let m = dateRx.exec(str);
+    if (m == null)
+        return null;
+
+    let d = parseInt(m[1]);
+    let mon = monthFromStr(m[2]);
+    if (mon == null)
+        return null;
+
+    let y = parseInt(m[3]);
+
+    return new Date(y, mon, d);
+}
 
 $(document).ready(() => run());
